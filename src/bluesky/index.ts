@@ -73,17 +73,19 @@ async function createSession(PDSHost: string, userHandle: string, password: stri
 // Bluesky Client
 class BlueskyClient {
   private headers: { Authorization: string; "Content-Type": string };
+  private PDSHost: string;
 
-  constructor(accessJwt: string) {
+  constructor(accessJwt: string, PDSHost: string) {
     this.headers = {
       Authorization: `Bearer ${accessJwt}`,
       "Content-Type": "application/json",
     };
+    this.PDSHost = PDSHost;
   }
 
   async getUserProfile(handle: string): Promise<any> {
     const response = await fetch(
-      `https://bsky.social/xrpc/app.bsky.actor.getProfile?actor=${handle}`,
+      `${this.PDSHost}/xrpc/app.bsky.actor.getProfile?actor=${handle}`,
       { headers: this.headers }
     );
     return response.json();
@@ -91,7 +93,7 @@ class BlueskyClient {
 
   async getUserPosts(handle: string, limit: number = 10): Promise<any> {
     const response = await fetch(
-      `https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed?actor=${handle}&limit=${Math.min(
+      `${this.PDSHost}/xrpc/app.bsky.feed.getAuthorFeed?actor=${handle}&limit=${Math.min(
         limit,
         100
       )}`,
@@ -126,7 +128,7 @@ async function main() {
   try {
     const accessJwt = await createSession(PDSHost, userHandle, password);
 
-    const blueskyClient = new BlueskyClient(accessJwt);
+    const blueskyClient = new BlueskyClient(accessJwt, PDSHost);
 
     server.setRequestHandler(
       CallToolRequestSchema,
