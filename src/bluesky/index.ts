@@ -45,13 +45,38 @@ const getUserPostsTool: Tool = {
   },
 };
 
+async function createSession(PDSHost: string, userHandle: string, password: string): Promise<string> {
+  if (!PDSHost || !userHandle || !password) {
+    throw new Error("Missing required environment variables: PDS_HOST, BSKY_HANDLE, or BSKY_PASSWORD.");
+  }
+
+  const response = await fetch(`${PDSHost}/xrpc/com.atproto.server.createSession`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      identifier: userHandle,
+      password: password,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || data.error) {
+    throw new Error(`Failed to authenticate: ${data.error || response.statusText}`);
+  }
+
+  return data.accessJwt; // TODO: have to handle refreshJwt as well
+}
+
 // Bluesky Client
 class BlueskyClient {
   private headers: { Authorization: string; "Content-Type": string };
 
-  constructor(accessToken: string) {
+  constructor(accessJwt: string) {
     this.headers = {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${accessJwt}`,
       "Content-Type": "application/json",
     };
   }
@@ -78,11 +103,12 @@ class BlueskyClient {
 
 // Main server
 async function main() {
-  const accessToken = process.env.BLUESKY_ACCESS_TOKEN;
+  const PDSHost = process.env.PDS_HOST || "https://bsky.social";
+  const userHandle = process.env.BSKY_HANDLE;
+  const password = process.env.BSKY_PASSWORD;
 
-  if (!accessToken) {
-    console.error("Please set the BLUESKY_ACCESS_TOKEN environment variable.");
-    process.exit(1);
+  if (!PDSHost || !userHandle || !password) {
+    throw new Error("Missing required environment variables");
   }
 
   const server = new Server(
@@ -96,67 +122,76 @@ async function main() {
       },
     }
   );
+  
+  try {
+    const accessJwt = await createSession(PDSHost, userHandle, password);
 
-  const blueskyClient = new BlueskyClient(accessToken);
+    const blueskyClient = new BlueskyClient(accessJwt);
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    console.error("Received CallToolRequest:", request);
+    server.setRequestHandler(
+      CallToolRequestSchema,
+      async (request) => {
+        console.error("Received CallToolRequest:", request);
+        try {
+          if (!request.params.arguments) {
+            throw new Error("No arguments provided");
+          }
 
-    try {
-      if (!request.params.arguments) {
-        throw new Error("No arguments provided");
-      }
+          switch (request.params.name) {
+            case "bluesky_get_user_profile": {
+              const args = request.params.arguments as { handle: string };
+              const response = await blueskyClient.getUserProfile(args.handle);
+              return {
+                content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+              };
+            }
 
-      switch (request.params.name) {
-        case "bluesky_get_user_profile": {
-          const args = request.params.arguments as { handle: string };
-          const response = await blueskyClient.getUserProfile(args.handle);
+            case "bluesky_get_user_posts": {
+              const args = request.params.arguments as { handle: string; limit?: number };
+              const response = await blueskyClient.getUserPosts(
+                args.handle,
+                args.limit || 10
+              );
+              return {
+                content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+              };
+            }
+
+            default:
+              throw new Error(`Unknown tool: ${request.params.name}`);
+          }
+        } catch (error) {
+          console.error("Error executing tool:", error);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+              },
+            ],
           };
         }
-
-        case "bluesky_get_user_posts": {
-          const args = request.params.arguments as { handle: string; limit?: number };
-          const response = await blueskyClient.getUserPosts(
-            args.handle,
-            args.limit || 10
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
-          };
-        }
-
-        default:
-          throw new Error(`Unknown tool: ${request.params.name}`);
       }
-    } catch (error) {
-      console.error("Error executing tool:", error);
+    );
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      console.error("Received ListToolsRequest");
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              error: error instanceof Error ? error.message : String(error),
-            }),
-          },
-        ],
+        tools: [getUserProfileTool, getUserPostsTool],
       };
-    }
-  });
+    });
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    console.error("Received ListToolsRequest");
-    return {
-      tools: [getUserProfileTool, getUserPostsTool],
-    };
-  });
+    const transport = new StdioServerTransport();
+    console.error("Connecting server to transport...");
+    await server.connect(transport);
 
-  const transport = new StdioServerTransport();
-  console.error("Connecting server to transport...");
-  await server.connect(transport);
-
-  console.error("Bluesky API Server running on stdio");
+    console.error("Bluesky API Server running on stdio");
+  } catch (error) {
+    console.error("Fatal error in main():", error);
+    process.exit(1);
+  }
 }
 
 main().catch((error) => {
