@@ -9,6 +9,25 @@ import {
 
 import fetch from "node-fetch";
 
+// Type definitions for tool arguments
+interface GetUserProfileArgs {
+  handle: string;
+}
+
+interface GetUserPostsArgs {
+  handle: string;
+  limit?: number;
+}
+
+interface CreateRecordArgs {
+  repo: string;
+  collection: string;
+  record: Record<string, any>;
+  rkey?: string;
+  validate?: boolean;
+  swapCommit?: string;
+}
+
 // Tool definitions
 const getUserProfileTool: Tool = {
   name: "bluesky_get_user_profile",
@@ -103,7 +122,7 @@ async function createSession(PDSHost: string, userHandle: string, password: stri
     throw new Error(`Failed to authenticate: ${data.error || response.statusText}`);
   }
 
-  return data.accessJwt; // TODO: have to handle refreshJwt as well
+  return data.accessJwt; // TODO: handle refreshJwt as well
 }
 
 // Bluesky Client
@@ -204,7 +223,7 @@ async function main() {
 
           switch (request.params.name) {
             case "bluesky_get_user_profile": {
-              const args = request.params.arguments as { handle: string };
+              const args = request.params.arguments as unknown as GetUserProfileArgs;
               const response = await blueskyClient.getUserProfile(args.handle);
               return {
                 content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
@@ -212,7 +231,7 @@ async function main() {
             }
 
             case "bluesky_get_user_posts": {
-              const args = request.params.arguments as { handle: string; limit?: number };
+              const args = request.params.arguments as unknown as GetUserPostsArgs;
               const response = await blueskyClient.getUserPosts(
                 args.handle,
                 args.limit || 10
@@ -223,14 +242,7 @@ async function main() {
             }
 
             case "bluesky_create_record": {
-              const args = request.params.arguments as {
-                repo: string;
-                collection: string;
-                record: Record<string, any>;
-                rkey?: string;
-                validate?: boolean;
-                swapCommit?: string;
-              };
+              const args = request.params.arguments as unknown as CreateRecordArgs;
               const response = await blueskyClient.createRecord(
                 args.repo,
                 args.collection,
