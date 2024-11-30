@@ -28,6 +28,27 @@ interface CreateRecordArgs {
   swapCommit?: string;
 }
 
+interface SearchPostsArgs {
+  q: string;
+  sort?: string;
+  since?: string;
+  until?: string;
+  mentions?: string;
+  author?: string;
+  lang?: string;
+  domain?: string;
+  url?: string;
+  tag?: string[];
+  limit?: number;
+  cursor?: string;
+}
+
+interface GetTimelineArgs {
+  algorithm?: string;
+  limit?: number;
+  cursor?: string;
+}
+
 // Tool definitions
 const getUserProfileTool: Tool = {
   name: "bluesky_get_user_profile",
@@ -97,6 +118,92 @@ const createRecordTool: Tool = {
       },
     },
     required: ["repo", "collection", "record"],
+  },
+};
+
+const getTimelineTool: Tool = {
+  name: "bluesky_get_timeline",
+  description: "Get a view of the requesting account's home timeline.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      algorithm: {
+        type: "string",
+        description: "Variant 'algorithm' for timeline. Implementation-specific.",
+      },
+      limit: {
+        type: "number",
+        description: "Maximum number of items to retrieve (default 50, max 100).",
+        default: 50,
+      },
+      cursor: {
+        type: "string",
+        description: "Pagination cursor for next page of results.",
+      },
+    },
+  },
+};
+
+const searchPostsTool: Tool = {
+  name: "bluesky_search_posts",
+  description: "Find posts matching search criteria.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      q: {
+        type: "string",
+        description: "Search query string.",
+      },
+      sort: {
+        type: "string",
+        enum: ["top", "latest"],
+        description: "Ranking order of results (default: 'latest').",
+        default: "latest",
+      },
+      since: {
+        type: "string",
+        description: "Filter results for posts after the specified datetime.",
+      },
+      until: {
+        type: "string",
+        description: "Filter results for posts before the specified datetime.",
+      },
+      mentions: {
+        type: "string",
+        description: "Filter posts mentioning the given account.",
+      },
+      author: {
+        type: "string",
+        description: "Filter posts by the given account.",
+      },
+      lang: {
+        type: "string",
+        description: "Filter posts by language.",
+      },
+      domain: {
+        type: "string",
+        description: "Filter posts linking to the given domain.",
+      },
+      url: {
+        type: "string",
+        description: "Filter posts pointing to this URL.",
+      },
+      tag: {
+        type: "array",
+        items: { type: "string" },
+        description: "Filter posts with the given tags (AND matching).",
+      },
+      limit: {
+        type: "number",
+        description: "Maximum number of items to retrieve (default 10, max 100).",
+        default: 10,
+      },
+      cursor: {
+        type: "string",
+        description: "Pagination cursor for next page of results.",
+      },
+    },
+    required: ["q"],
   },
 };
 
@@ -183,6 +290,58 @@ class BlueskyClient {
   
     return response.json();
   }
+
+  async getTimeline(algorithm?: string, limit: number = 50, cursor?: string): Promise<any> {
+    const params = new URLSearchParams();
+    if (algorithm) params.append("algorithm", algorithm);
+    params.append("limit", Math.min(limit, 100).toString());
+    if (cursor) params.append("cursor", cursor);
+
+    const response = await fetch(
+      `${this.PDSHost}/xrpc/app.bsky.feed.getTimeline?${params.toString()}`,
+      { headers: this.headers }
+    );
+
+    return response.json();
+  }
+
+  async searchPosts(query: {
+    q: string;
+    sort?: string;
+    since?: string;
+    until?: string;
+    mentions?: string;
+    author?: string;
+    lang?: string;
+    domain?: string;
+    url?: string;
+    tag?: string[];
+    limit?: number;
+    cursor?: string;
+  }): Promise<any> {
+    const params = new URLSearchParams({
+      q: query.q,
+      sort: query.sort || "latest",
+      limit: Math.min(query.limit || 25, 100).toString(),
+    });
+
+    if (query.since) params.append("since", query.since);
+    if (query.until) params.append("until", query.until);
+    if (query.mentions) params.append("mentions", query.mentions);
+    if (query.author) params.append("author", query.author);
+    if (query.lang) params.append("lang", query.lang);
+    if (query.domain) params.append("domain", query.domain);
+    if (query.url) params.append("url", query.url);
+    if (query.tag) params.append("tag", query.tag.join(","));
+    if (query.cursor) params.append("cursor", query.cursor);
+
+    const response = await fetch(
+      `${this.PDSHost}/xrpc/app.bsky.feed.searchPosts?${params.toString()}`,
+      { headers: this.headers }
+    );
+
+    return response.json();
+  }
 }
 
 // Main server
@@ -256,6 +415,26 @@ async function main() {
               };
             }
 
+            case "bluesky_get_timeline": {
+              const args = request.params.arguments as unknown as GetTimelineArgs;
+              const response = await blueskyClient.getTimeline(
+                args.algorithm,
+                args.limit,
+                args.cursor
+              );
+              return {
+                content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+              };
+            }
+
+            case "bluesky_search_posts": {
+              const args = request.params.arguments as unknown as SearchPostsArgs;
+              const response = await blueskyClient.searchPosts(args);
+              return {
+                content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+              };
+            }
+
             default:
               throw new Error(`Unknown tool: ${request.params.name}`);
           }
@@ -278,7 +457,13 @@ async function main() {
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       console.error("Received ListToolsRequest");
       return {
-        tools: [getUserProfileTool, getUserPostsTool, createRecordTool],
+        tools: [
+          getUserProfileTool,
+          getUserPostsTool,
+          createRecordTool,
+          getTimelineTool,
+          searchPostsTool,
+        ],
       };
     });
 
