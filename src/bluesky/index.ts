@@ -45,6 +45,42 @@ const getUserPostsTool: Tool = {
   },
 };
 
+const createRecordTool: Tool = {
+  name: "bluesky_create_record",
+  description: "Create a new record in the specified Bluesky repo and collection",
+  inputSchema: {
+    type: "object",
+    properties: {
+      repo: {
+        type: "string",
+        description:
+          "The handle or DID of the repo (e.g., 'username.bsky.social'). If unsure whether to use the BSKY_HANDLE environment variable, please ask the user.",
+      },
+      collection: {
+        type: "string",
+        description: "The NSID of the record collection",
+      },
+      record: {
+        type: "object",
+        description: "The data for the new record",
+      },
+      rkey: {
+        type: "string",
+        description: "The Record Key (optional)",
+      },
+      validate: {
+        type: "boolean",
+        description: "Set to false to skip schema validation (default: true)",
+      },
+      swapCommit: {
+        type: "string",
+        description: "The CID of the previous commit (optional)",
+      },
+    },
+    required: ["repo", "collection", "record"],
+  },
+};
+
 async function createSession(PDSHost: string, userHandle: string, password: string): Promise<string> {
   if (!PDSHost || !userHandle || !password) {
     throw new Error("Missing required environment variables: PDS_HOST, BSKY_HANDLE, or BSKY_PASSWORD.");
@@ -99,6 +135,33 @@ class BlueskyClient {
       )}`,
       { headers: this.headers }
     );
+    return response.json();
+  }
+
+  async createRecord(
+    repo: string,
+    collection: string,
+    record: Record<string, any>,
+    rkey?: string,
+    validate: boolean = true,
+    swapCommit?: string
+  ): Promise<any> {
+    const response = await fetch(
+      `${this.PDSHost}/xrpc/com.atproto.repo.createRecord`,
+      {
+        method: "POST",
+        headers: this.headers,
+        body: JSON.stringify({
+          repo,
+          collection,
+          record,
+          rkey,
+          validate,
+          swapCommit,
+        }),
+      }
+    );
+  
     return response.json();
   }
 }
@@ -159,6 +222,28 @@ async function main() {
               };
             }
 
+            case "bluesky_create_record": {
+              const args = request.params.arguments as {
+                repo: string;
+                collection: string;
+                record: Record<string, any>;
+                rkey?: string;
+                validate?: boolean;
+                swapCommit?: string;
+              };
+              const response = await blueskyClient.createRecord(
+                args.repo,
+                args.collection,
+                args.record,
+                args.rkey,
+                args.validate ?? true,
+                args.swapCommit
+              );
+              return {
+                content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+              };
+            }
+
             default:
               throw new Error(`Unknown tool: ${request.params.name}`);
           }
@@ -181,7 +266,7 @@ async function main() {
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       console.error("Received ListToolsRequest");
       return {
-        tools: [getUserProfileTool, getUserPostsTool],
+        tools: [getUserProfileTool, getUserPostsTool, createRecordTool],
       };
     });
 
